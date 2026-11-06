@@ -106,6 +106,10 @@ P_SMOOTH = Param("smoothing", "Bộ làm mịn", "choice", "bilateral", options=
 P_SMOOTH_S = Param("smooth_strength", "Độ mịn", "float", 2.0, 0.0, 6.0, 0.25, help="≈ sigma của bộ làm mịn (pixel)")
 P_EDGE = Param("edge_op", "Toán tử biên", "choice", "sobel", options=EDGE_OPTS)
 P_DETAIL = Param("detail", "Mức chi tiết biên", "float", 0.5, 0.0, 1.0, 0.05, help="Cao hơn → nhiều nét hơn")
+P_SHADE = Param("shading", "Đổ bóng", "float", 0.4, 0.0, 1.0, 0.05,
+                help="Tô xám vùng tối theo độ sáng gốc, tránh vùng tối bị trắng loang")
+P_SHARP = Param("sharpness", "Độ nét", "float", 0.6, 0.0, 2.0, 0.05,
+                help="Unsharp mask: g = f + k·(f − Gaussian(f)), làm rõ chi tiết")
 
 
 # =========================================================================== khối dùng chung
@@ -123,6 +127,17 @@ def pencil_dodge(gray: np.ndarray, blur_sigma: float, darkness: float) -> tuple[
     blur = F.gaussian_blur(inv, blur_sigma)
     dodge = np.clip(gray / np.maximum(1.0 - blur, 1e-3), 0.0, 1.0)
     return P.gamma_correct(dodge, darkness), inv, blur
+
+
+def tone_layer(gray: np.ndarray, amount: float, scale: float) -> np.ndarray:
+    """Lớp đổ bóng: vùng tối được tô xám theo độ sáng đã làm mờ (như người vẽ tô bóng bằng chì).
+
+    Color dodge biến vùng tối phẳng thành trắng (tỉ số ~0/0); nhân thêm lớp này để giữ khối sáng tối.
+    T = 1 - amount * (1 - G_σ(gray)),  σ = 2 px ở độ phân giải tham chiếu.
+    """
+    if amount <= 0:
+        return np.ones_like(gray)
+    return (1.0 - amount * (1.0 - F.gaussian_blur(gray, 2.0 * scale))).astype(np.float32)
 
 
 def edge_maps(gray: np.ndarray, op: str, detail: float, scale: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -148,7 +163,7 @@ def edge_maps(gray: np.ndarray, op: str, detail: float, scale: float) -> tuple[n
         mask = zc > thr
         return mask.astype(np.float32), mask, E.normalize(np.abs(resp))
     if op == "canny":
-        mask, st = E.canny(gray, sigma=1.2 * scale, low_ratio=0.5, high_quantile=0.95 - 0.35 * detail, return_steps=True)
+        mask, st = E.canny(gray, sigma=1.0 * scale, low_ratio=0.5, high_quantile=0.95 - 0.35 * detail, return_steps=True)
         return mask.astype(np.float32), mask, np.sqrt(E.normalize(st["nms"]))  # căn bậc 2 để nét mảnh dễ nhìn
     if op == "xdog":
         x = E.xdog_lines(gray, sigma=1.0 * scale, k=1.6, eps=0.4 - 0.32 * detail, phi=8.0)
@@ -180,6 +195,42 @@ def apply_pencil_texture(shade: np.ndarray, amount: float, angle: float, scale: 
     return np.clip(out - amount * 0.06 * (grain - 0.5), 0, 1).astype(np.float32)
 
 
+def ink_hatching(gray: np.ndarray, amount: float, scale: float) -> np.ndarray:
+    """Tô mảng tối bằng nét gạch như tranh vẽ mực: tối vừa -> gạch chéo một chiều, rất tối -> gạch chéo hai chiều,
+    tối nhất -> mực đặc. Ngưỡng lấy từ độ sáng đã làm mịn; amount = 0 thì tắt."""
+    if amount <= 0:
+        return np.ones_like(gray)
+    g = F.gaussian_blur(gray, 1.2 * scale)
+    h, w = g.shape
+    y, x = np.mgrid[0:h, 0:w]
+    period = max(3.0, 5.0 * scale)
+    width = max(1.0, 1.4 * scale)
+    d1 = np.mod(x + y, period) < width          # nét gạch 45°
+    d2 = np.mod(x - y, period) < width          # nét gạch -45°
+    t = 0.45 * amount
+    out = np.ones_like(g)
+    out[(g < t) & d1] = 0.0
+    out[(g < 0.6 * t) & d2] = 0.0
+    out[g < 0.3 * t] = 0.0
+    return out
+
+
+def toon_luminance(rgb: np.ndarray, levels: int, softness: float = 0.35) -> np.ndarray:
+    """Lượng tử hoá mềm theo độ sáng (toon shading, Winnemöller 2006).
+
+    Chỉ kênh Y (YCbCr) bị chia thành `levels` bậc; Cb/Cr giữ nguyên nên màu da, màu gỗ... không bị
+    gộp vào một cụm chung như k-means toàn ảnh. Chuyển bậc mềm bằng tanh để không bị răng cưa:
+    Q(y) = q + (Δ/2)·tanh(φ·(y − q)), q = bậc gần nhất, φ = 1 / (softness·Δ).
+    """
+    levels = max(2, int(levels))
+    ycc = rgb_to_ycbcr(rgb)
+    y = ycc[..., 0]
+    step = 1.0 / (levels - 1)
+    q = np.round(y / step) * step
+    ycc[..., 0] = np.clip(q + 0.5 * step * np.tanh((y - q) / (softness * step)), 0, 1)
+    return ycbcr_to_rgb(ycc)
+
+
 def _ink(mask: np.ndarray) -> np.ndarray:
     """Mặt nạ biên -> ảnh nét đen trên nền trắng."""
     return np.where(mask, 0.0, 1.0).astype(np.float32)
@@ -197,9 +248,10 @@ def _boost_saturation(rgb: np.ndarray, factor: float) -> np.ndarray:
 def fx_pencil(img: np.ndarray, p: dict, s: float) -> EffectResult:
     gray = _gray(img, p)
     sm = F.smooth(gray, p["smoothing"], p["smooth_strength"], s)
-    out, inv, blur = pencil_dodge(sm, p["blur"] * s, p["darkness"])
+    dodge, inv, blur = pencil_dodge(sm, p["blur"] * s, p["darkness"])
+    out = F.unsharp_mask(dodge * tone_layer(sm, p["shading"], s), p["sharpness"], 1.0 * s)
     return EffectResult(out, [("Ảnh mức xám", gray), ("Làm mịn", sm), ("Âm bản", inv),
-                              ("Âm bản làm mờ Gaussian", blur), ("Color dodge + gamma", out)])
+                              ("Âm bản làm mờ Gaussian", blur), ("Color dodge + gamma", dodge), ("Làm nét (unsharp)", out)])
 
 
 def fx_sketch(img: np.ndarray, p: dict, s: float) -> EffectResult:
@@ -209,7 +261,8 @@ def fx_sketch(img: np.ndarray, p: dict, s: float) -> EffectResult:
     soft, mask, resp = edge_maps(sm, p["edge_op"], p["detail"], s)
     if p["edge_op"] in ("canny", "log"):
         soft = F.gaussian_blur(M.thicken(mask, 0.6 * s).astype(np.float32), 0.6 * s)
-    shade = base * (1.0 - p["edge_strength"] * soft)
+    shade = base * (1.0 - p["edge_strength"] * soft) * tone_layer(sm, p["shading"], s)
+    shade = F.unsharp_mask(shade, p["sharpness"], 1.0 * s)
     out = apply_pencil_texture(shade, p["texture"], p["hatch_angle"], s)
     return EffectResult(out, [("Ảnh mức xám", gray), ("Làm mịn", sm), ("Phác thảo color dodge", base),
                               ("Bản đồ biên", resp), ("Kết hợp biên", shade), ("Thêm vân bút chì", out)])
@@ -225,8 +278,10 @@ def fx_lineart(img: np.ndarray, p: dict, s: float) -> EffectResult:
     out = _ink(thick)
     if p["edge_op"] == "xdog" and p["thickness"] < 0.5:
         out = 1.0 - soft  # giữ nét mềm của XDoG
+    fill = ink_hatching(sm, p["fill"], s)
+    out = np.minimum(out, fill)
     # Khử răng cưa nhẹ cho nét mực.
-    out = F.gaussian_blur(out, 0.5 * s)
+    out = F.gaussian_blur(out, 0.35 * s)
     if p["invert"]:
         out = 1.0 - out
     return EffectResult(out, [("Ảnh mức xám", gray), ("Làm mịn", sm), ("Đáp ứng biên", resp),
@@ -239,11 +294,13 @@ def fx_cartoon(img: np.ndarray, p: dict, s: float) -> EffectResult:
     for _ in range(p["passes"]):
         sm = F.bilateral_filter(sm, sigma_space=p["sigma_space"] * s, sigma_color=p["sigma_color"],
                                 radius=max(1, int(round(2 * p["sigma_space"] * s))))
-    if p["quantizer"] == "kmeans":
+    if p["quantizer"] == "luminance":
+        q = toon_luminance(sm, p["colors"])
+    elif p["quantizer"] == "kmeans":
         q = P.kmeans_colors(sm, p["colors"])
     else:
         q = P.quantize_uniform(sm, max(2, round(p["colors"] ** (1 / 3) + 1)))
-    q = _boost_saturation(q, p["saturation"])
+    q = F.unsharp_mask(_boost_saturation(q, p["saturation"]), p["sharpness"], 1.0 * s)
     gray = P.enhance(rgb_to_gray(rgb), p["enhance"])
     if p["edge_op"] == "adaptive":
         g = F.median_filter(gray, 2 * max(1, int(round(2 * s))) + 1)
@@ -251,8 +308,9 @@ def fx_cartoon(img: np.ndarray, p: dict, s: float) -> EffectResult:
         mask = M.remove_isolated(mask, 3)
     else:
         _, mask, _ = edge_maps(F.gaussian_blur(gray, 0.5 * s), p["edge_op"], p["detail"], s)
+        mask = M.remove_isolated(M.remove_isolated(mask, 2), 2)  # bỏ chấm vụn (vân lông, nhiễu)
     mask = M.thicken(mask, p["thickness"] * s)
-    lines = F.gaussian_blur(_ink(mask), 0.5 * s)
+    lines = F.gaussian_blur(_ink(mask), 0.35 * s)
     out = q * lines[..., None]
     return EffectResult(out, [("Bilateral lặp", sm), ("Lượng tử hoá màu", q), ("Mặt nạ biên", lines), ("Kết quả", out)])
 
@@ -260,12 +318,14 @@ def fx_cartoon(img: np.ndarray, p: dict, s: float) -> EffectResult:
 def fx_color_pencil(img: np.ndarray, p: dict, s: float) -> EffectResult:
     rgb = ensure_rgb(img)
     gray = _gray(rgb, p)
-    sm = F.smooth(gray, "bilateral", 1.5, s)
+    sm = F.smooth(gray, "bilateral", 1.0, s)
     base, _, _ = pencil_dodge(sm, p["blur"] * s, p["darkness"])
     soft, _, resp = edge_maps(sm, "sobel", 0.5, s)
-    shade = apply_pencil_texture(base * (1.0 - p["edge_strength"] * soft), p["texture"], 45.0, s)
+    shade = base * (1.0 - p["edge_strength"] * soft) * tone_layer(sm, p["shading"], s)
+    shade = F.unsharp_mask(shade, p["sharpness"], 1.0 * s)
+    shade = apply_pencil_texture(shade, p["texture"], 45.0, s)
     # Ghép: độ sáng Y lấy từ nét chì, sắc độ Cb/Cr lấy từ ảnh gốc (giảm/tăng theo `color`).
-    ycc = rgb_to_ycbcr(F.gaussian_blur(rgb, 1.0 * s))
+    ycc = rgb_to_ycbcr(F.gaussian_blur(rgb, 0.5 * s))
     ycc[..., 0] = shade
     ycc[..., 1:] = 0.5 + (ycc[..., 1:] - 0.5) * p["color"]
     out = ycbcr_to_rgb(ycc)
@@ -289,51 +349,60 @@ EFFECTS: dict[str, Effect] = {e.id: e for e in [
         P_ENHANCE,
         replace(P_SMOOTH, default="none"),
         replace(P_SMOOTH_S, default=1.0),
-        Param("blur", "Độ rộng nét (σ blur)", "float", 10.0, 1.0, 40.0, 0.5),
+        Param("blur", "Độ rộng nét (σ blur)", "float", 6.0, 1.0, 40.0, 0.5),
         Param("darkness", "Độ đậm (gamma)", "float", 1.8, 0.5, 5.0, 0.1),
+        P_SHADE,
+        P_SHARP,
     ), fx_pencil),
     Effect("sketch", "Chì + biên + vân giấy", "Phác thảo chì kết hợp bản đồ biên và nét gạch bút chì.", (
-        P_ENHANCE, P_SMOOTH, P_SMOOTH_S, P_EDGE, P_DETAIL,
+        P_ENHANCE, P_SMOOTH, replace(P_SMOOTH_S, default=1.0), P_EDGE, P_DETAIL,
         Param("edge_strength", "Độ đậm biên", "float", 0.6, 0.0, 1.0, 0.05),
-        Param("blur", "Độ rộng nét (σ blur)", "float", 12.0, 1.0, 40.0, 0.5),
+        Param("blur", "Độ rộng nét (σ blur)", "float", 7.0, 1.0, 40.0, 0.5),
         Param("darkness", "Độ đậm (gamma)", "float", 1.5, 0.5, 5.0, 0.1),
-        Param("texture", "Vân bút chì", "float", 0.35, 0.0, 1.0, 0.05),
+        P_SHADE,
+        P_SHARP,
+        Param("texture", "Vân bút chì", "float", 0.2, 0.0, 1.0, 0.05),
         Param("hatch_angle", "Góc nét gạch (°)", "float", 45.0, 0.0, 180.0, 5.0),
     ), fx_sketch),
     Effect("lineart", "Nét mực (line art)", "Chỉ giữ đường biên: nét đen trên nền trắng như tranh vẽ mực.", (
-        P_ENHANCE, P_SMOOTH, P_SMOOTH_S,
-        replace(P_EDGE, default="canny"),
-        P_DETAIL,
-        Param("thickness", "Độ dày nét", "float", 1.0, 0.0, 4.0, 0.25, help="Bán kính phép giãn (pixel)"),
+        P_ENHANCE, P_SMOOTH, replace(P_SMOOTH_S, default=0.5),
+        replace(P_EDGE, default="xdog"),
+        replace(P_DETAIL, default=0.8),
+        Param("thickness", "Độ dày nét", "float", 0.0, 0.0, 4.0, 0.25, help="Bán kính phép giãn (pixel); 0 = nét XDoG tự nhiên"),
+        Param("fill", "Tô mảng tối", "float", 0.5, 0.0, 1.0, 0.05, help="Gạch chéo các vùng tối như vẽ mực"),
         Param("clean", "Lọc điểm nhiễu", "bool", True),
         Param("invert", "Nét trắng nền đen", "bool", False),
     ), fx_lineart),
     Effect("cartoon", "Hoạt hình", "Bilateral lặp + lượng tử hoá màu + viền đen.", (
         P_ENHANCE,
-        Param("passes", "Số lần bilateral", "int", 2, 1, 4, 1),
-        Param("sigma_space", "σ không gian", "float", 2.5, 1.0, 5.0, 0.25),
+        Param("passes", "Số lần bilateral", "int", 1, 1, 4, 1),
+        Param("sigma_space", "σ không gian", "float", 1.5, 1.0, 5.0, 0.25),
         Param("sigma_color", "σ màu", "float", 0.1, 0.02, 0.4, 0.01),
-        Param("quantizer", "Lượng tử hoá", "choice", "kmeans", options=(("kmeans", "K-means"), ("uniform", "Đều"))),
-        Param("colors", "Số màu", "int", 8, 2, 24, 1),
+        Param("quantizer", "Lượng tử hoá", "choice", "luminance",
+              options=(("luminance", "Theo độ sáng"), ("kmeans", "K-means"), ("uniform", "Đều"))),
+        Param("colors", "Số màu / bậc sáng", "int", 8, 2, 24, 1),
         Param("saturation", "Độ bão hoà", "float", 1.2, 0.0, 2.0, 0.05),
-        Param("edge_op", "Viền", "choice", "adaptive",
-              options=(("adaptive", "Ngưỡng thích nghi"), ("canny", "Canny"), ("xdog", "XDoG"), ("sobel", "Sobel"))),
-        P_DETAIL,
-        Param("thickness", "Độ dày viền", "float", 0.5, 0.0, 4.0, 0.25),
+        Param("edge_op", "Viền", "choice", "xdog",
+              options=(("xdog", "XDoG"), ("adaptive", "Ngưỡng thích nghi"), ("canny", "Canny"), ("sobel", "Sobel"))),
+        replace(P_DETAIL, default=0.6),
+        Param("thickness", "Độ dày viền", "float", 0.0, 0.0, 4.0, 0.25),
+        replace(P_SHARP, default=0.4),
     ), fx_cartoon),
     Effect("color_pencil", "Chì màu", "Nét chì làm kênh độ sáng Y, giữ sắc độ Cb/Cr của ảnh gốc.", (
         P_ENHANCE,
-        Param("blur", "Độ rộng nét (σ blur)", "float", 10.0, 1.0, 40.0, 0.5),
+        Param("blur", "Độ rộng nét (σ blur)", "float", 6.0, 1.0, 40.0, 0.5),
         Param("darkness", "Độ đậm (gamma)", "float", 1.4, 0.5, 5.0, 0.1),
         Param("color", "Lượng màu", "float", 1.0, 0.0, 2.0, 0.05),
         Param("edge_strength", "Độ đậm biên", "float", 0.4, 0.0, 1.0, 0.05),
-        Param("texture", "Vân bút chì", "float", 0.3, 0.0, 1.0, 0.05),
+        P_SHADE,
+        P_SHARP,
+        Param("texture", "Vân bút chì", "float", 0.2, 0.0, 1.0, 0.05),
     ), fx_color_pencil),
     Effect("oil", "Sơn dầu", "Lọc Kuwahara bảo toàn biên + lượng tử hoá + làm sắc nét Laplacian.", (
-        Param("radius", "Bán kính cọ", "float", 4.0, 1.0, 12.0, 0.5),
-        Param("levels", "Số mức màu", "int", 14, 3, 32, 1),
+        Param("radius", "Bán kính cọ", "float", 2.0, 1.0, 12.0, 0.5),
+        Param("levels", "Số mức màu", "int", 32, 3, 48, 1),
         Param("saturation", "Độ bão hoà", "float", 1.25, 0.0, 2.0, 0.05),
-        Param("sharpen", "Làm sắc nét", "float", 0.3, 0.0, 1.5, 0.05),
+        Param("sharpen", "Làm sắc nét", "float", 0.6, 0.0, 1.5, 0.05),
     ), fx_oil),
 ]}
 
@@ -341,7 +410,7 @@ EFFECTS: dict[str, Effect] = {e.id: e for e in [
 # Preset theo loại ảnh: ghi đè tham số mặc định (chỉ áp cho khoá mà hiệu ứng có).
 CATEGORIES = {
     "nature": ("Ảnh tự nhiên", {}),
-    "medical": ("Ảnh y tế", {"enhance": "stretch", "smoothing": "bilateral", "smooth_strength": 2.5,
+    "medical": ("Ảnh y tế", {"enhance": "stretch", "smoothing": "bilateral", "smooth_strength": 1.5, "fill": 0.0,
                              "detail": 0.6, "edge_strength": 0.7, "darkness": 1.4}),
     "industrial": ("Ảnh công nghiệp", {"enhance": "stretch", "smoothing": "median", "smooth_strength": 1.5,
                                       "detail": 0.65, "edge_op": "canny"}),

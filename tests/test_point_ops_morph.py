@@ -91,3 +91,24 @@ def test_io_rejects_garbage():
     from core.io_utils import InvalidImageError
     with pytest.raises(InvalidImageError):
         load_image(b"not an image at all")
+
+
+def test_trim_borders_keeps_plain_photo_and_sky(rng):
+    from core.io_utils import trim_borders
+    img = rng.random((60, 80, 3)).astype(np.float32)
+    assert trim_borders(img)[1] is None
+    sky = img.copy()
+    sky[:10] = 0.8 + rng.normal(0, 0.03, (10, 80, 3))  # bầu trời có nhiễu nhẹ -> không phải viền
+    assert trim_borders(np.clip(sky, 0, 1))[1] is None
+    lb = np.zeros((60, 120, 3), np.float32)
+    lb[:, 20:100] = img
+    out, box = trim_borders(lb)
+    assert box == (0, 0, 20, 20) and out.shape == (60, 80, 3)
+
+
+def test_unsharp_mask_increases_edge_contrast(square):
+    from core.filters import gaussian_blur, unsharp_mask
+    soft = gaussian_blur(square, 1.5)
+    sharp = unsharp_mask(soft, 1.0, 1.0)
+    assert sharp[40, 21] - sharp[40, 18] > soft[40, 21] - soft[40, 18]
+    assert unsharp_mask(soft, 0.0) is soft

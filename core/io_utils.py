@@ -56,6 +56,35 @@ def load_image(src: str | bytes | BinaryIO) -> np.ndarray:
     return _pil_to_array(im)
 
 
+def trim_borders(img: np.ndarray, tol: float = 0.006, drift: float = 0.02, min_frac: float = 0.02) -> tuple[np.ndarray, tuple[int, int, int, int] | None]:
+    """Tự cắt viền phẳng (letterbox đen/trắng hoặc dải chuyển màu của ảnh chụp màn hình, video).
+
+    Đi từ mép vào trong: một hàng/cột là viền nếu gần như phẳng (độ lệch chuẩn < tol) và trung bình
+    chỉ thay đổi ít so với hàng/cột trước (< drift), nên bắt được cả viền gradient.
+    Chỉ cắt khi viền dày >= min_frac kích thước và phần còn lại >= 40%.
+    Trả về (ảnh đã cắt, (top, bottom, left, right)) hoặc (ảnh gốc, None).
+    """
+    g = img.mean(axis=-1) if img.ndim == 3 else img
+    h, w = g.shape
+
+    def run(lines: np.ndarray) -> int:
+        std, mean = lines.std(axis=1), lines.mean(axis=1)
+        n = 0
+        while n < len(lines) and std[n] < tol and (n == 0 or abs(mean[n] - mean[n - 1]) < drift):
+            n += 1
+        return n
+
+    top, bottom = run(g), run(g[::-1])
+    left, right = run(g.T), run(g.T[::-1])
+    top, bottom = (top if top >= min_frac * h else 0), (bottom if bottom >= min_frac * h else 0)
+    left, right = (left if left >= min_frac * w else 0), (right if right >= min_frac * w else 0)
+    if not (top or bottom or left or right):
+        return img, None
+    if h - top - bottom < 0.4 * h or w - left - right < 0.4 * w:
+        return img, None
+    return img[top:h - bottom, left:w - right].copy(), (top, bottom, left, right)
+
+
 def to_uint8(img: np.ndarray) -> np.ndarray:
     return (np.clip(img, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
 

@@ -10,7 +10,7 @@ from flask import Blueprint, current_app, g, jsonify, request, send_file
 
 from core.color import rgb_to_gray
 from core.effects import CATEGORIES, EFFECTS, compare_edges, compare_filters, preset_params, run_effect
-from core.io_utils import InvalidImageError, encode, load_image, resize_max, to_data_url
+from core.io_utils import InvalidImageError, encode, load_image, resize_max, to_data_url, trim_borders
 from core.point_ops import histogram
 
 from . import db as D
@@ -19,8 +19,9 @@ from .schemas import ApiError
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
-STEP_SIDE = 360       # ảnh trung gian gửi về ở kích thước nhỏ cho nhẹ
-COMPARE_SIDE = 480
+STEP_SIDE = 480       # ảnh trung gian gửi về ở kích thước nhỏ cho nhẹ
+COMPARE_SIDE = 640
+PREVIEW_MIN, PREVIEW_MAX = 480, 1400
 MAX_PRESETS = 50
 
 
@@ -36,6 +37,22 @@ def _limit(heavy: bool = False) -> None:
     lim_c, lim_ip = current_app.config["LIMITS_HEAVY" if heavy else "LIMITS"]
     lim_c.check(g.client_id)
     lim_ip.check(request.remote_addr or "?")
+
+
+def _result_url(img: np.ndarray) -> str:
+    """Ảnh xám (nét chì, nét mực) gửi PNG không mất dữ liệu: nét sắc hơn và còn nhẹ hơn WEBP lossy.
+    Ảnh màu gửi WEBP chất lượng cao."""
+    return to_data_url(img, "PNG") if img.ndim == 2 else to_data_url(img, "WEBP", 95)
+
+
+def _preview_side(value) -> int | None:
+    """Kích thước preview frontend yêu cầu (theo khung hiển thị x devicePixelRatio), làm tròn bội 80."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return None
+    v = max(PREVIEW_MIN, min(PREVIEW_MAX, v))
+    return int(np.ceil(v / 80) * 80)
 
 
 def _hist(img: np.ndarray) -> list[int]:
@@ -72,9 +89,12 @@ def _result_json(r: dict) -> dict:
     }
 
 
-def _ingest(img: np.ndarray, filename: str, category: str):
+def _ingest(img: np.ndarray, filename: str, category: str, trim: bool = True):
     if min(img.shape[:2]) < 16:
         raise ApiError(400, "Ảnh quá nhỏ (cần tối thiểu 16×16 px)")
+    trimmed = None
+    if trim:  # bỏ viền đen/trắng đồng màu (letterbox) để không phí độ phân giải
+        img, trimmed = trim_borders(img)
     cfg = _app()
     img = resize_max(img, cfg.work_side)
     image_id, rel = _store().save_upload(img)
@@ -82,7 +102,7 @@ def _ingest(img: np.ndarray, filename: str, category: str):
     db = D.get_db()
     D.insert_image(db, id=image_id, client_id=g.client_id, filename=filename, category=category, width=w, height=h, path=rel)
     row = D.get_image(db, image_id, g.client_id)
-    return jsonify({"image": _image_json(row, _store().load(image_id, rel)[1])}), 201
+    return jsonify({"image": _image_json(row, _store().load(image_id, rel)[1]), "trimmed": trimmed is not None}), 201
 
 
 # =========================================================================== metadata
@@ -152,7 +172,8 @@ def upload():
         img = load_image(f.stream.read())
     except InvalidImageError as e:
         raise ApiError(400, str(e)) from e
-    return _ingest(img, S.safe_filename(f.filename), S.category(request.form.get("category")))
+    return _ingest(img, S.safe_filename(f.filename), S.category(request.form.get("category")),
+                   trim=request.form.get("trim", "1") != "0")
 
 
 @bp.get("/images/<image_id>")
@@ -167,12 +188,18 @@ def process():
     _limit()
     data = S.body(request)
     eid, params = S.effect_and_params(data)
-    _, _, preview = _load_owned_image(data.get("image_id"))
+    row, _, preview = _load_owned_image(data.get("image_id"))
+    side = _preview_side(data.get("preview_side"))
+    if side:
+        preview = _store().preview_at(row["id"], row["path"], side)
     t0 = time.perf_counter()
     with current_app.config["GATE"].slot():
         res = run_effect(eid, preview, params)
     ms = int((time.perf_counter() - t0) * 1000)
-    out = {"image": to_data_url(res.image, "WEBP", 92), "params": params, "duration_ms": ms, "histogram": _hist(res.image)}
+    out = {"image": _result_url(res.image), "params": params, "duration_ms": ms, "histogram": _hist(res.image),
+           "size": [int(res.image.shape[1]), int(res.image.shape[0])]}
+    if data.get("with_original"):
+        out["original"] = to_data_url(preview, "WEBP", 95)
     if data.get("steps"):
         out["steps"] = [{"label": lbl, "image": to_data_url(resize_max(np.clip(im, 0, 1), STEP_SIDE), "WEBP", 85)}
                         for lbl, im in res.steps]

@@ -12,43 +12,43 @@
   "effects_ms": {
     "pencil": {
       "name": "Phác thảo chì",
-      "800": 53,
-      "1600": 227
+      "800": 117,
+      "1600": 673
     },
     "sketch": {
       "name": "Chì + biên + vân giấy",
-      "800": 243,
-      "1600": 1001
+      "800": 286,
+      "1600": 2017
     },
     "lineart": {
       "name": "Nét mực (line art)",
-      "800": 202,
-      "1600": 819
+      "800": 163,
+      "1600": 943
     },
     "cartoon": {
       "name": "Hoạt hình",
-      "800": 961,
-      "1600": 4908
+      "800": 455,
+      "1600": 3941
     },
     "color_pencil": {
       "name": "Chì màu",
-      "800": 302,
-      "1600": 1992
+      "800": 371,
+      "1600": 2367
     },
     "oil": {
       "name": "Sơn dầu",
-      "800": 295,
-      "1600": 1100
+      "800": 425,
+      "1600": 1753
     }
   },
   "algorithms_ms_800": {
-    "Gaussian σ=3": 26,
-    "Gaussian σ=20 (3 hộp)": 44,
-    "Trung vị 5x5": 147,
-    "Bilateral r=5 (RGB)": 197,
-    "Kuwahara r=4 (RGB)": 176,
-    "Sobel": 9,
-    "Canny": 65,
-    "LoG + zero-crossing": 34
+    "Gaussian σ=3": 40,
+    "Gaussian σ=20 (3 hộp)": 58,
+    "Trung vị 5x5": 243,
+    "Bilateral r=5 (RGB)": 444,
+    "Kuwahara r=4 (RGB)": 269,
+    "Sobel": 15,
+    "Canny": 112,
+    "LoG + zero-crossing": 48
   }
 }

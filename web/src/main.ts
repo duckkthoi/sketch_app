@@ -26,6 +26,7 @@ interface State {
 
 let S: State;
 let inflight: AbortController | null = null;
+let originalSide = 0; // kích thước của ảnh gốc đang hiển thị trong khung so sánh
 let requestSeq = 0;
 const analysisCache = new Map<string, { label: string; image: string }[]>();
 
@@ -159,6 +160,19 @@ function selectEffect(id: string, params?: Params): void {
 
 const scheduleProcess = debounce(() => void processNow(), 200);
 
+/** Cạnh dài cần xử lý để ảnh hiển thị sắc nét: kích thước khung thật x devicePixelRatio. */
+function previewSide(): number {
+  if (!S.image) return 800;
+  const box = $("#compare");
+  const cw = Math.max(200, box.clientWidth - 24);
+  const ch = Math.max(200, window.innerHeight - 290);
+  const aspect = S.image.width / S.image.height;
+  const dispW = Math.min(cw, ch * aspect);
+  const dispH = dispW / aspect;
+  const side = Math.ceil(Math.max(dispW, dispH) * (window.devicePixelRatio || 1));
+  return Math.min(1400, Math.max(480, side), Math.max(S.image.width, S.image.height));
+}
+
 function onParamChange(key: string, value: ParamValue): void {
   S.params[key] = value;
   scheduleProcess();
@@ -173,14 +187,23 @@ async function processNow(): Promise<void> {
   compare.setBusy(true);
   setStatus("Đang xử lý…");
   try {
-    const res = await api.process({ image_id: S.image.id, effect: S.effect.id, params: S.params, steps: true }, ctrl.signal);
+    const side = previewSide();
+    const needOriginal = Math.abs(side - originalSide) >= 80;
+    const res = await api.process(
+      { image_id: S.image.id, effect: S.effect.id, params: S.params, steps: true, preview_side: side, with_original: needOriginal },
+      ctrl.signal,
+    );
     if (seq !== requestSeq) return;
     S.result = res;
+    if (res.original) {
+      compare.setOriginal(res.original);
+      originalSide = side;
+    }
     compare.setResult(res.image);
     setActionsEnabled(true);
     renderSteps();
     updateHistogram();
-    setStatus(`${S.effect.name} · xử lý ${res.duration_ms} ms trên ảnh preview`);
+    setStatus(`${S.effect.name} · ${res.size[0]}×${res.size[1]}px · xử lý ${res.duration_ms} ms`);
   } catch (e) {
     if (seq === requestSeq) {
       handleError(e);
@@ -205,6 +228,7 @@ function setImage(img: ImageInfo): void {
   el.empty.hidden = true;
   el.stage.hidden = false;
   compare.setOriginal(img.preview);
+  originalSide = 0; // xin lại ảnh gốc đúng độ phân giải ở lần xử lý đầu
   el.info.textContent = `${img.filename} · ${img.width}×${img.height}px`;
   setActionsEnabled(false);
   updateHistogram();
@@ -231,7 +255,9 @@ async function uploadFile(file: File): Promise<void> {
   setStatus(`Đang tải lên ${file.name}…`);
   compare.setBusy(true);
   try {
-    setImage(await api.upload(file, S.category));
+    const { image, trimmed } = await api.upload(file, S.category);
+    setImage(image);
+    if (trimmed) toast("Đã tự cắt viền đồng màu quanh ảnh để giữ độ nét", "info");
     await processNow();
   } catch (e) {
     handleError(e);
@@ -394,7 +420,10 @@ function wire(): void {
     const f = item?.getAsFile();
     if (f) void uploadFile(new File([f], f.name || "clipboard.png", { type: f.type }));
   });
-  window.addEventListener("resize", debounce(updateHistogram, 150));
+  window.addEventListener("resize", debounce(() => {
+    updateHistogram();
+    if (S.image && Math.abs(previewSide() - originalSide) >= 160) void processNow();
+  }, 300));
 }
 
 async function init(): Promise<void> {

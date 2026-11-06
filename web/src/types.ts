@@ -59,6 +59,8 @@ export interface ProcessResponse {
   duration_ms: number;
   histogram: number[];
   steps?: StepImage[];
+  original?: string;
+  size: [number, number];
 }
 
 export interface CompareResponse {

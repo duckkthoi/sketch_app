@@ -71,14 +71,14 @@ export const api = {
   effects: () => json<EffectsResponse>("GET", "/api/effects"),
   samples: () => json<{ samples: Sample[] }>("GET", "/api/samples").then((r) => r.samples),
   useSample: (id: string) => json<{ image: ImageInfo }>("POST", "/api/samples/use", { id }).then((r) => r.image),
-  upload(file: File, category: string): Promise<ImageInfo> {
+  upload(file: File, category: string): Promise<{ image: ImageInfo; trimmed: boolean }> {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("category", category);
-    return json<{ image: ImageInfo }>("POST", "/api/upload", fd).then((r) => r.image);
+    return json<{ image: ImageInfo; trimmed: boolean }>("POST", "/api/upload", fd);
   },
   image: (id: string) => json<{ image: ImageInfo }>("GET", `/api/images/${id}`).then((r) => r.image),
-  process: (req: RenderRequest & { steps: boolean }, signal?: AbortSignal) =>
+  process: (req: RenderRequest & { steps: boolean; preview_side: number; with_original: boolean }, signal?: AbortSignal) =>
     json<ProcessResponse>("POST", "/api/process", { ...req }, signal),
   compare: (image_id: string, kind: "filters" | "edges", signal?: AbortSignal) =>
     json<CompareResponse>("POST", "/api/compare", { image_id, kind }, signal),

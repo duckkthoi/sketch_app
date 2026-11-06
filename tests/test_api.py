@@ -76,7 +76,13 @@ def test_upload_process_download_flow(client):
     r = client.post("/api/process", json={"image_id": img["id"], "effect": "sketch", "params": {"blur": 999}, "steps": True})
     js = r.get_json()
     assert r.status_code == 200, js
-    assert js["image"].startswith("data:image/webp") and js["params"]["blur"] == 40.0
+    assert js["image"].startswith("data:image/png") and js["params"]["blur"] == 40.0  # ảnh xám -> PNG không mất dữ liệu
+    assert js["size"] == [120, 90] and "original" not in js
+
+    # Preview theo kích thước màn hình: không bao giờ phóng to vượt ảnh làm việc; with_original trả ảnh gốc cùng cỡ.
+    r = client.post("/api/process", json={"image_id": img["id"], "effect": "oil", "params": {}, "preview_side": 1400, "with_original": True})
+    js2 = r.get_json()
+    assert js2["size"] == [120, 90] and js2["image"].startswith("data:image/webp") and js2["original"].startswith("data:image/webp")
     assert len(js["steps"]) >= 3 and all(s["image"].startswith("data:") for s in js["steps"])
     assert len(js["histogram"]) == 64
 
@@ -243,3 +249,17 @@ def test_index_without_build(tmp_path):
     cfg.static_dir = tmp_path / "nostatic"
     r = create_app(cfg).test_client().get("/")
     assert r.status_code == 503 and "npm run build" in r.get_data(as_text=True)
+
+
+def test_upload_trims_letterbox(client):
+    a = np.zeros((90, 200, 3), np.uint8)                       # viền đen 2 bên
+    a[:, 40:60] = np.linspace(0, 20, 20, dtype=np.uint8)[None, :, None]  # dải chuyển màu như ảnh chụp video
+    rng = np.random.default_rng(1)
+    a[:, 60:140] = rng.integers(40, 220, (90, 80, 3))          # nội dung thật
+    buf = io.BytesIO()
+    Image.fromarray(a).save(buf, format="PNG")
+    js = upload(client, buf.getvalue()).get_json()
+    assert js["trimmed"] is True and (js["image"]["width"], js["image"]["height"]) == (80, 90)
+    # Ảnh thường không có viền thì giữ nguyên.
+    js = upload(client).get_json()
+    assert js["trimmed"] is False and js["image"]["width"] == 120

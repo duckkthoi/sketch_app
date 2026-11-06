@@ -13,6 +13,8 @@ Bài tập lớn môn Xử lý ảnh (INT13146), **Đề tài 4**. Web nhỏ chu
 - Preset tham số theo loại ảnh (tự nhiên / y tế / công nghiệp). Đọc được ảnh xám 16-bit (X-quang, MRI dạng PNG/TIFF).
 - Thanh trượt so sánh trước/sau, xem ảnh trung gian từng bước của pipeline, tab so sánh các thuật toán đặt cạnh nhau, histogram mức xám.
 - Tải kết quả về dạng PNG/JPG ở độ phân giải gốc (tối đa 1600px).
+- Tự cắt viền letterbox (viền đen/dải chuyển màu của ảnh chụp màn hình video) khi upload. Ảnh xem trước được xử lý theo độ phân giải thật của màn hình (480–1400px). Ảnh xám (nét chì, nét mực) gửi về dạng PNG không mất dữ liệu.
+- Thanh "Độ nét" (unsharp mask) và "Đổ bóng" cho các hiệu ứng chì, "Tô mảng tối" (gạch chéo) cho nét mực, lượng tử hoá theo độ sáng cho hoạt hình.
 - **Lịch sử và preset lưu trong SQLite**, riêng cho từng trình duyệt (cookie ẩn danh), tự xoá sau 7 ngày.
 
 ## Cấu trúc

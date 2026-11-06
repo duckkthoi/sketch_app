@@ -21,6 +21,7 @@ class ImageStore:
         self.preview_side = preview_side
         self.cache_size = cache_size
         self._cache: OrderedDict[str, tuple[np.ndarray, np.ndarray]] = OrderedDict()
+        self._sized: OrderedDict[str, np.ndarray] = OrderedDict()
         self._lock = threading.Lock()
         for sub in ("uploads", "results", "thumbs"):
             (root / sub).mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,23 @@ class ImageStore:
             while len(self._cache) > self.cache_size:
                 self._cache.popitem(last=False)
         return entry
+
+    def preview_at(self, image_id: str, rel: str, side: int) -> np.ndarray:
+        """Ảnh preview ở cạnh dài `side` px (cache theo từng kích thước, không phóng to)."""
+        work, default = self.load(image_id, rel)
+        if side == self.preview_side:
+            return default
+        key = f"{image_id}@{side}"
+        with self._lock:
+            if key in self._sized:
+                self._sized.move_to_end(key)
+                return self._sized[key]
+        img = resize_max(work, side)
+        with self._lock:
+            self._sized[key] = img
+            while len(self._sized) > self.cache_size * 2:
+                self._sized.popitem(last=False)
+        return img
 
     def forget(self, image_id: str) -> None:
         with self._lock:

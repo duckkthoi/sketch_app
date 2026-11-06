@@ -275,6 +275,13 @@ def motion_kernel(length: int, angle_deg: float) -> np.ndarray:
     return k / k.sum()
 
 
+def unsharp_mask(img: np.ndarray, amount: float, sigma: float = 1.0) -> np.ndarray:
+    """Làm nét: g = f + k·(f − G_σ * f). Phần (f − G_σ * f) là chi tiết tần số cao (gần −∇²f)."""
+    if amount <= 0:
+        return img
+    return np.clip(img + amount * (img - gaussian_blur(img, sigma)), 0, 1).astype(np.float32)
+
+
 def smooth(img: np.ndarray, method: str, strength: float = 1.0, scale: float = 1.0) -> np.ndarray:
     """Chọn bộ làm mịn theo tên. `strength` ~ sigma (pixel ở độ phân giải preview), `scale` để nhân theo kích thước ảnh."""
     s = max(0.0, strength) * scale

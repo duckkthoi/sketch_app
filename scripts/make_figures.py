@@ -159,7 +159,8 @@ def main() -> None:
     sp[m > 0.97] = 1
     tiles = [("Ảnh nhiễu muối tiêu 6%", sp)]
     for method, label in [("none", "Không làm mịn"), ("gaussian", "Gaussian"), ("median", "Trung vị"), ("bilateral", "Bilateral")]:
-        p = {**preset_params("lineart", "medical"), "smoothing": method, "smooth_strength": 1.5}
+        p = {**preset_params("lineart", "medical"), "smoothing": method, "smooth_strength": 1.5,
+             "edge_op": "canny", "detail": 0.5, "thickness": 1.0, "fill": 0.0}
         tiles.append((f"Line art + {label}", run_effect("lineart", sp, p).image))
     grid(tiles, 5, 280, "noise_smoothing.png")
 
@@ -173,6 +174,37 @@ def main() -> None:
     xr = sample("medical/chest_xray", 640)
     grid([(f"Tăng tương phản: {lbl}", run_effect("sketch", xr, {**preset_params("sketch", "medical"), "enhance": e}).image)
           for e, lbl in [("none", "không"), ("stretch", "giãn"), ("equalize", "cân bằng histogram")]], 3, 300, "enhance_medical.png")
+
+    # 8b. Trước / sau khi cải thiện độ chi tiết (tham số cũ được mô phỏng lại)
+    old = {
+        "lineart": {"edge_op": "canny", "detail": 0.5, "thickness": 1.0, "smooth_strength": 2.0, "fill": 0.0},
+        "cartoon": {"passes": 2, "sigma_space": 2.5, "quantizer": "kmeans", "edge_op": "adaptive", "detail": 0.5,
+                    "thickness": 0.5, "sharpness": 0.0},
+        "oil": {"radius": 4.0, "levels": 14, "sharpen": 0.3},
+        "sketch": {"smooth_strength": 2.0, "blur": 12.0, "texture": 0.35, "shading": 0.0, "sharpness": 0.0},
+    }
+    img = sample("nature/portrait", 900)
+    h, w = img.shape[:2]
+    crop = (slice(int(0.05 * h), int(0.5 * h)), slice(int(0.15 * w), int(0.85 * w)))
+    tiles = [("Ảnh gốc", img[crop])]
+    for eid in ("sketch", "lineart", "cartoon", "oil"):
+        tiles.append((f"{EFFECTS[eid].name}: cũ", run_effect(eid, img, old[eid]).image[crop]))
+        tiles.append((f"{EFFECTS[eid].name}: mới", run_effect(eid, img).image[crop]))
+    grid(tiles, 3, 260, "improve_detail.png")
+
+    # 8c. Tự cắt viền letterbox (mô phỏng ảnh chụp màn hình video có viền đen + dải chuyển màu)
+    from core.io_utils import trim_borders
+    base = sample("nature/cat", 600)
+    hh, ww = base.shape[:2]
+    lb = np.zeros((hh, ww + 400, 3), np.float32)
+    grad = np.linspace(0, 0.08, 80, dtype=np.float32)
+    lb[:, 120:200] = grad[None, :, None]
+    lb[:, ww + 200:ww + 280] = grad[::-1][None, :, None]
+    lb[:, 200:200 + ww] = base
+    trimmed, _ = trim_borders(lb)
+    grid([("Ảnh có viền (letterbox)", lb), ("Sau khi tự cắt viền", trimmed),
+          ("Phác thảo chì trên ảnh có viền", run_effect("pencil", lb).image),
+          ("Phác thảo chì sau khi cắt viền", run_effect("pencil", trimmed).image)], 2, 260, "trim_borders.png")
 
     # 9. Benchmark thời gian
     img800 = sample("nature/mountain_lake", 800)
