@@ -1,0 +1,14 @@
+**/__pycache__
+**/*.pyc
+.pytest_cache
+storage
+storage-docker
+static
+web/node_modules
+web/dist
+tests
+docs
+scripts
+.git
+.venv
+*.log

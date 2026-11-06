@@ -1,0 +1,12 @@
+# Chạy giống production trên máy local: docker compose up --build  ->  http://localhost:8000
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: "doi-chuoi-nay-khi-deploy"
+      RETENTION_DAYS: "7"
+      TRUST_PROXY: "false"
+    volumes:
+      - ./storage-docker:/app/storage

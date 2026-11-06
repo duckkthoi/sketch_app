@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nét Vẽ – Chuyển ảnh thành tranh vẽ</title>
+    <meta name="description" content="Chuyển ảnh y tế, tự nhiên, công nghiệp thành tranh vẽ bằng phát hiện biên, mức xám và lọc làm mịn." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img src="/favicon.svg" alt="" width="30" height="30" />
+        <div>
+          <strong>Nét Vẽ</strong>
+          <span>ảnh → tranh vẽ</span>
+        </div>
+      </div>
+
+      <div class="cat-switch" id="categories" role="radiogroup" aria-label="Loại ảnh"></div>
+
+      <div class="actions">
+        <button id="btn-upload" class="btn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0l-5 5m5-5l5 5M4 20h16" /></svg>
+          Tải ảnh lên
+        </button>
+        <input type="file" id="file-input" accept="image/*,.tif,.tiff" hidden />
+        <button id="btn-save" class="btn" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z" /></svg>
+          Lưu lịch sử
+        </button>
+        <div class="split">
+          <button id="btn-download" class="btn primary" type="button" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m0 0l-5-5m5 5l5-5M4 20h16" /></svg>
+            Tải về
+          </button>
+          <select id="dl-format" aria-label="Định dạng tải về">
+            <option value="png">PNG</option>
+            <option value="jpg">JPG</option>
+          </select>
+        </div>
+        <button id="btn-theme" class="icon-btn" type="button" aria-label="Đổi giao diện sáng/tối" title="Sáng / tối">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar" aria-label="Điều khiển">
+        <section>
+          <h2>Hiệu ứng</h2>
+          <div id="effects" class="effect-list" role="listbox" aria-label="Chọn hiệu ứng"></div>
+        </section>
+        <section>
+          <div class="section-head">
+            <h2>Tham số</h2>
+            <button id="btn-reset" class="link" type="button">Về mặc định</button>
+          </div>
+          <p id="effect-desc" class="muted small"></p>
+          <div id="params" class="params"></div>
+        </section>
+        <section>
+          <h2>Preset của tôi</h2>
+          <div id="presets" class="presets"></div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <nav class="tabs" role="tablist" aria-label="Chế độ xem">
+          <button role="tab" data-tab="compare" aria-selected="true">Trước / Sau</button>
+          <button role="tab" data-tab="steps" aria-selected="false">Các bước xử lý</button>
+          <button role="tab" data-tab="analysis" aria-selected="false">So sánh thuật toán</button>
+          <button role="tab" data-tab="history" aria-selected="false">Lịch sử</button>
+        </nav>
+
+        <section id="view-compare" class="view">
+          <div id="empty" class="empty">
+            <label id="dropzone" class="dropzone" for="file-input">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16l4-4 4 4 4-6 4 6M4 20h16M4 4h16v12H4z" /></svg>
+              <strong>Kéo thả ảnh vào đây hoặc bấm để chọn</strong>
+              <span class="muted small">PNG, JPG, TIFF (kể cả ảnh y tế 16-bit), tối đa <span id="max-mb">15</span> MB</span>
+            </label>
+            <div class="samples-head">
+              <h3>Hoặc thử ảnh mẫu</h3>
+            </div>
+            <div id="samples" class="samples"></div>
+          </div>
+          <div id="stage" class="stage" hidden>
+            <div id="compare" class="compare"></div>
+            <div class="stage-bar">
+              <div class="seg" id="view-mode">
+                <button type="button" data-mode="split" aria-pressed="true">So sánh</button>
+                <button type="button" data-mode="result" aria-pressed="false">Kết quả</button>
+                <button type="button" data-mode="original" aria-pressed="false">Ảnh gốc</button>
+              </div>
+              <span id="image-info" class="muted small"></span>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-steps" class="view" hidden>
+          <p class="muted small">Ảnh trung gian của pipeline hiện tại, theo thứ tự xử lý.</p>
+          <div id="steps" class="grid"></div>
+        </section>
+
+        <section id="view-analysis" class="view" hidden>
+          <div class="analysis-head">
+            <div class="seg" id="analysis-kind">
+              <button type="button" data-kind="filters" aria-pressed="true">Bộ lọc làm mịn</button>
+              <button type="button" data-kind="edges" aria-pressed="false">Toán tử phát hiện biên</button>
+            </div>
+            <span id="analysis-note" class="muted small"></span>
+          </div>
+          <div id="analysis" class="grid"></div>
+        </section>
+
+        <section id="view-history" class="view" hidden>
+          <p class="muted small">Lịch sử chỉ hiển thị trên trình duyệt này và tự xoá sau 7 ngày.</p>
+          <div id="history" class="grid history"></div>
+          <div class="center"><button id="history-more" class="btn" type="button" hidden>Tải thêm</button></div>
+        </section>
+
+        <footer class="statusbar">
+          <span id="status" class="muted small">Chưa có ảnh</span>
+          <div class="hist-wrap" title="Histogram mức xám: ảnh gốc (xám) và kết quả (màu)">
+            <canvas id="hist" width="192" height="40" aria-label="Histogram mức xám"></canvas>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

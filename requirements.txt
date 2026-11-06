@@ -1,0 +1,5 @@
+# Runtime (Docker/Railway). KHÔNG dùng OpenCV theo yêu cầu đề bài.
+numpy==2.1.2
+pillow==11.0.0
+flask==3.1.3
+gunicorn==23.0.0

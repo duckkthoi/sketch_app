@@ -1,0 +1,8 @@
+-r requirements.txt
+# scipy chỉ dùng trong test để đối chiếu kết quả các bộ lọc tự cài đặt
+scipy==1.14.1
+pytest==9.2.0
+# sinh báo cáo / slides
+python-docx
+python-pptx
+matplotlib
